@@ -34,7 +34,7 @@ if programlauncher.last.running:
   print "The program is still running after one minute, we will ask it to terminate..."
   programlauncher.last.terminate()  # use .terminate() to send a terminate signal
 else:
-  howmuchtimeago = time.time() - programlauncher.last.finishedat  # 
+  howmuchtimeago = time.time() - programlauncher.last.finishedat  # when did this process terminate? lets find out
   print "The program was terminated {} seconds ago.".format(howmuchtimeago)
 # and now we launch a second program
 programlauncher.launch('/path/to/a/new/program -a option1 -b option2 -c "a string as parameter"')

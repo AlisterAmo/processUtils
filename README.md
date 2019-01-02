@@ -1,7 +1,7 @@
 # processUtils
 processUtils: a wrapper that enhances your experience with Python Subprocess.Popen and workarounds some of its limitations (Python 2.7)  
 
-If you are like me, you probably write python programs that need to repeatedly launch several party tools or system utilities, and then you parse the output. But this process often becomes more difficult than expected, specially because the subprocess module shipped in python gives little or no control of the Popen instances once they are launched.  
+If you are like me, you probably write python programs that need to repeatedly launch several 3rd party tools or system utilities, and then you parse the output. But this process often becomes more difficult than expected, specially because the subprocess module shipped in python gives little or no control of the Popen instances once they are launched.  
   
 ## Features
 This module provides:
@@ -25,15 +25,28 @@ import time
 from processUtils import *  
 programlauncher = SubprocessManager()
 programlauncher.launch('/full/path/to/external/tool -o "complex set" "of parameters" "between quotes"')
-# this will show the stdout so far, without risk of deadlocks :) 
-print "Output of the program launched:\n" + programlauncher.last.stdout  # Note the convenience shortcut programlauncher.last, always pointing to the last program launched so its easier to handle
+time.sleep(1)
+# next method will show the stdout so far, without risk of deadlocks :) 
+print "Output of the program launched:\n" + programlauncher.last.stdout  
+# Note the convenience shortcut programlauncher.last, always pointing to the last program launched so its easier to handle
 time.sleep(60)  # we pause a minute
 if programlauncher.last.running:
   print "The program is still running after one minute, we will ask it to terminate..."
   programlauncher.last.terminate()  # use .terminate() to send a terminate signal
 else:
   howmuchtimeago = time.time() - programlauncher.last.finishedat  # 
-  print "The program was terminated {} seconds ago.".format(howmuchtimeago)  
+  print "The program was terminated {} seconds ago.".format(howmuchtimeago)
+# and now we launch a second program
+programlauncher.launch('/path/to/a/new/program -a option1 -b option2 -c "a string as parameter"')
+# and a third
+programlauncher.launch('top')
+# but we can acess all the info of previous two if we want to
+print "Commands launched so far, and active status:"
+for program in programlauncher.ManagedProcesses:
+  print 'Command: "{}"  -   Running: {}'.format(program.command, str(program.running))
+# some global stats
+print 'Total programs launched: {}'.format(programlauncher.stats['launched'])
+print 'Total programs still running: {}'.format(programlauncher.stats['running'])
 ```
 
 I hope you get the idea, but feel free to inspect the self explanatory contents of the code. I have not written a better documentation yet and the module is still in process of changes and incorporation of new features, your suggestions and commits are more than welcome.

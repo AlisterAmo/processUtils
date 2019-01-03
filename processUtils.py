@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-from subprocess import Popen,PIPE, STDOUT
+from subprocess import Popen,PIPE
+# from subprocess32 import Popen,PIPE,check_output
 from Queue import Queue, Empty
-from threading import Thread
+import threading
 import shlex
-import logging
 import time
 import os
 import signal
@@ -84,6 +84,29 @@ class SubprocessManager:
         managedsubprocess._popeninstance.wait()
         return returnvalue
 
+    class AsynchronousFileReader(threading.Thread):
+        '''
+        Helper class to implement asynchronous reading of a file
+        in a separate thread. Pushes read lines on a queue to
+        be consumed in another thread.
+        '''
+
+        def __init__(self, fd, queue):
+            assert isinstance(queue, Queue)
+            assert callable(fd.readline)
+            threading.Thread.__init__(self)
+            self._fd = fd
+            self._queue = queue
+
+        def run(self):
+            '''The body of the tread: read lines and put them on the queue.'''
+            for line in iter(self._fd.readline, ''):
+                self._queue.put(line)
+
+        def eof(self):
+            '''Check whether there is no more content to expect.'''
+            return not self.is_alive() and self._queue.empty()
+
     class ManagedSubprocess:
         def __init__(self, command, **kwargs):
             self.command = command
@@ -96,20 +119,20 @@ class SubprocessManager:
             self.workingdirectory = kwargs.get('cwd')
             self.finishedat = None
             self.startedat = time.time()
-            self.stdout = ""  # clear text, self updating contents of stdout
-            self.stderr = ""  # clear text, self updating contents of stderr
+            self._stdout = ""  # clear text, self updating contents of stdout
+            self._stderr = ""  # clear text, self updating contents of stderr
             self._popeninstance = Popen(self._parsedcommand, bufsize=-1, preexec_fn=os.setsid, close_fds=True, stderr=PIPE, stdout=PIPE, stdin=PIPE, cwd=self.workingdirectory, universal_newlines=True)
             self.pid = self._popeninstance.pid
-            # stdout/stderr queue setup
-            self._stderrq = Queue()
-            self._stderrt = Thread(target=self._enqueue_output, args=(self._popeninstance.stderr, self._stderrq))
-            self._stderrt.daemon = True  # thread dies with the program
-            self._stderrt.start()
-
+            
+            # Launch the asynchronous readers of the process' stdout and stderr.
             self._stdoutq = Queue()
-            self._stdoutt = Thread(target=self._enqueue_output, args=(self._popeninstance.stdout, self._stdoutq))
-            self._stdoutt.daemon = True  # thread dies with the program
-            self._stdoutt.start()
+            self._stdout_reader = SubprocessManager.AsynchronousFileReader(self._popeninstance.stdout, self._stdoutq)
+            self._stdout_reader.start()
+
+            self._stderrq = Queue()
+            self._stderr_reader = SubprocessManager.AsynchronousFileReader(self._popeninstance.stderr, self._stderrq)
+            self._stderr_reader.start()
+
             # force a first update of subprocess stats
             self._update()
 
@@ -122,14 +145,14 @@ class SubprocessManager:
                 self.running = True
             else:
                 self.running = False
-                self.cleanupafterfinished()
             if not self.running:
                 self.finishedat = (time.time() if not self.running else None)
                 self.didreturnerror = (self.returncode != 0)
                 if self.didreturnerror:
                     self.waskilledbysignal = (self.returncode < 0)
                     self.signalthatkilledprocess = abs(self.returncode)
-            ## flush stdout/stderr queues without blocking
+            '''
+            ## flush stdout/stderr queues without blocking (old version)
             queues = {self._stdoutq, self._stderrq}
             for queue in queues:
                 queue_not_empty = True
@@ -146,6 +169,25 @@ class SubprocessManager:
                     self.stdout += output
                 elif queue == self._stderrq:
                     self.stderr += output
+            '''
+            # Check the queues if we received some output (until there is nothing more to get).
+            # Show what we received from standard output.
+            while not self._stdoutq.empty():
+                line = self._stdoutq.get()
+                self._stdout += line
+                log.debug('Received line on standard output: ' + repr(line))
+
+            # Show what we received from standard error.
+            while not self._stderrq.empty():
+                line = self._stderrq.get()
+                self._stderr += line
+                log.debug('Received line on standard error: ' + repr(line))
+
+            if not self.running:  # cleanup after process is finished. the latest in the flow, the better
+                self._stdout_reader.join()
+                self._stderr_reader.join()
+                self._popeninstance.stderr.close()
+                self._popeninstance.stdout.close()
 
             returnvalue = {'running': self.running,
                            'finishedat': self.finishedat,
@@ -153,21 +195,21 @@ class SubprocessManager:
                            'didreturnerror': self.didreturnerror,
                            'waskilledbysignal': self.waskilledbysignal,
                            'signalthatkilledtheprocess': self.signalthatkilledprocess,
-                           'stdout': self.stdout,
-                           'stderr': self.stderr}
+                           'stdout': self._stdout,
+                           'stderr': self._stderr}
             log.debug('Stats de {} despues de _update:\n{}'.format(self, returnvalue))
             return returnvalue
 
-
-        @staticmethod
-        def _enqueue_output(output, queue):
-            for line in iter(output.readline, b''):
-                queue.put(line)
-            output.close()
+        @property
+        def stdout(self):
+            self._update()
+            return self._stdout
 
 
-        def cleanupafterfinished(self):
-            pass
+        @property
+        def stderr(self):
+            self._update()
+            return self._stderr
 
 
         def send_input(self, input):
@@ -198,8 +240,6 @@ class SubprocessManager:
             log.debug('Updating stats for {} after sending signal...'.format(self))
             return returnvalue
 
-
-# Algunas utilidades que dejamos fuera de los objetos porque pueden ser de utilidad general
 
 def subprocess_alive(popeninstance):
     poll = popeninstance.poll()
@@ -238,73 +278,18 @@ def pid_exists(pid):
         exists = True
     if exists:
         return Popen.poll(pid)
-
-
+    
+    
 ## Some testing code
 
 if __name__ == "__main__":
     log.debug("Testeando ManagedSubprocess")
     testingmanagedsubprocess = SubprocessManager()
-    '''
-    cmd = "tail -n 15 -f /var/log/kern.log"  # simple código de testing que se ejecuta al ser llamados directamente
-    # lista de señales con las que queremos experimentar y cantidad de veces de la prueba
-    listofsignalstosend = [signal.SIGSTOP] + [signal.SIGTERM] * 7 + [signal.SIGKILL] * 7
+    log.info('Testing. Launching stdoutgenerator.sh.')
+    test_process = testingmanagedsubprocess.launch("yes testing")  # if you wanna test, call the module directly 
     i = 0
-    for i in range(len(listofsignalstosend)):  # crearemos un proceso para cada test de señal a enviar
-        log.debug('==================================')
-        log.debug('Lanzamiento de proceso: {}'.format(i+1))
-        testingmanagedsubprocess.launch(cmd)
-    log.debug('')
-    log.debug("Pausa antes de enviar señales a los procesos lanzados...")
-    log.debug('')
-    time.sleep(2)
-    # ahora, a enviar las señales para completar los tests
-    i = 0
-    for i in range(len(testingmanagedsubprocess.managedsubprocesses)):
-        # para iterar por los ManagedSubprocess, en este punto se espera que sea la misma cantidad que listofsignalstosend
-        currentmanagedsubprocess = testingmanagedsubprocess.managedsubprocesses[i]
-        tipeofsignal = listofsignalstosend.pop()
-        log.debug('==================================')
-        log.debug('Test de envío de señal {}. ManagedSubprocess index: {}. Señal: {}'.format(i+1, currentmanagedsubprocess, tipeofsignal))
-        log.debug('Comprobando si el PID {} sigue activo...'.format(currentmanagedsubprocess.pid))
-        if currentmanagedsubprocess.running:
-            if tipeofsignal == signal.SIGTERM:
-                log.debug('Llamando al método terminate del ManagedSubprocess..')
-                returnvalue = testingmanagedsubprocess.terminate(currentmanagedsubprocess)
-            elif tipeofsignal == signal.SIGKILL:
-                log.debug('Llamando al método kill del ManagedSubprocess..')
-                returnvalue = testingmanagedsubprocess.kill(currentmanagedsubprocess)
-            else:
-                log.debug('Llamando al método send_signal({}) del ManagedSubprocess..'.format(tipeofsignal))
-                returnvalue = testingmanagedsubprocess.send_signal(currentmanagedsubprocess, tipeofsignal)
-        else:
-            log.warn('Proceso no aparece como activo. Ignorando envío de señal.')
-    log.debug('==================================')
-    log.debug('Stats al final del test: {}'.format(testingmanagedsubprocess.stats))
-    '''
-    log.info('Test de stdout. Lanzando proceso ls...')
-    test_process = testingmanagedsubprocess.launch("ls")
-    print test_process.stdout
-    time.sleep(1)
-    log.info('Test de stderr. Lanzando proceso cd con parámetros erróneos...')
-    test_process = testingmanagedsubprocess.launch("ls carpetaquenoexiste")
-    print test_process.stderr
+    while i < 100:
+        i += 1
+        print test_process.stdout  # this var is updated in near real time so you can access the stdout/stderr outputs ASAP 
+        time.sleep(0.1)
 
-    log.info('Test de send_input. Lanzando proceso que pide entrada por stdin...')
-
-    # stdout_test_process.send_input_lf('lolazo')
-    # while test_process.running:
-    test_process = testingmanagedsubprocess.launch("./stdintest.sh")
-    log.info("Captando stdout antes de enviar datos a stdin:")
-    log.info(test_process.stdout)
-    log.info("Enviando datos a stdin:")
-    test_process.send_input_lf("this is a testing input sent to the waiting process")
-    time.sleep(2)
-    a = test_process._update()
-    log.info(test_process.stdout)
-    log.info(a)
-
-    # log.info('Mostrando stderr: \n{}'.format(stdout_test_process.stderr))
-
-    # log.debug('Cleaning up...')
-    # testingmanagedsubprocess.killall

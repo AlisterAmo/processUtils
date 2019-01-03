@@ -27,8 +27,8 @@ programlauncher = SubprocessManager()
 programlauncher.launch('/full/path/to/external/tool -o "complex set" "of parameters" "between quotes"')
 time.sleep(1)
 # next method will show the stdout so far, without risk of deadlocks :) 
-print "Output of the program launched:\n" + programlauncher.last.stdout  
-# Note the convenience shortcut programlauncher.last, always pointing to the last program launched so its easier to handle
+print "Output of the program launched:\n" + programlauncher.last_launched.stdout  
+# Note the convenience shortcut programlauncher.last_launched, always pointing to the last program launched so its easier to handle
 time.sleep(60)  # we pause a minute
 if programlauncher.last.running:
   print "The program is still running after one minute, we will ask it to terminate..."
@@ -40,7 +40,12 @@ else:
 programlauncher.launch('/path/to/a/new/program -a option1 -b option2 -c "a string as parameter"')
 # and a third
 programlauncher.launch('top')
-# but we can acess all the info of previous two if we want to
+# and we can get stdout/stderr easily
+print programlauncher.last_launched.stdout  # last, the "top" intance we just launched
+print programlauncher.managedsubprocesses[0].stdout  # the first subprocess launched
+print programlauncher.managedsubprocesses[1].stderr  # the stderr of the second one, etc...
+
+# we can iterate all the info all launched instances if we want to
 print "Commands launched so far, and active status:"
 for program in programlauncher.ManagedProcesses:
   print 'Command: "{}"  -   Running: {}'.format(program.command, str(program.running))

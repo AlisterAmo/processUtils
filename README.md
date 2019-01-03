@@ -8,15 +8,15 @@ This module provides:
 
 * Easy method to prepare your Popen command with nothing more than a simple string. Like when you use `shell=True`, but without using such a dangerous parameter. 
 * A complete, iterable, autoupdated data structure with all the relevant information per each Popen instance:
-** Original string of the command launched and parameters (string)
-** Running/finished status (boolean)
-** Return code (if finished)
-** Did it return an error? (boolean)
-** Was it killed by a signal? (boolean)
-** Type of signal that killed the process (int)
-** Time of launch / finish (time.time() format)
-** Working directory used in the Popen instance
-** And the most useful and desired: NON BLOCKING READ of stdout/stderr, in the form of convenient string attributes that you can check at any point in your program
+  * Original string of the command launched and parameters (string)
+  * Running/finished status (boolean)
+  * Return code (if finished)
+  * Did it return an error? (boolean)
+  * Was it killed by a signal? (boolean)
+  * Type of signal that killed the process (int)
+  * Time of launch / finish (time.time() format)
+  * Working directory used in the Popen instance
+  * And the most useful and desired: NON BLOCKING READ of stdout/stderr, in the form of convenient string attributes that you can check at any point in your program
 
 ## Example
 
